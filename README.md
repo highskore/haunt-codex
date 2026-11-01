@@ -9,7 +9,26 @@ Reports OpenAI Codex CLI sessions to the [haunt](../../haunt) terminal: running 
 
 ## Install
 
-Add this to `~/.codex/config.toml`. If the file already has a `[hooks]` table or a `~/.codex/hooks.json`, merge it in by hand; Codex warns when one layer uses both.
+`haunt setup codex` runs `install.sh` for you. You can also run it yourself:
+
+```sh
+./install.sh --dry-run           # print the exact config.toml change as a diff; change nothing
+./install.sh --apply             # make it; idempotent
+./install.sh --remove [--dry-run]  # take out only our block
+```
+
+- **Where.** It edits `$CODEX_HOME/config.toml`, which defaults to `~/.codex/config.toml`.
+- **What it writes.** It appends the block below between `# >>> haunt-codex >>>` and `# <<< haunt-codex <<<` markers, using this checkout's absolute path. Lines outside the markers are never changed. A stale block, from a moved checkout, is replaced.
+- **Backups.** Every write first copies the config to `config.toml.haunt-codex-<time>-<random>`. The new file is written to a temp file and renamed into place, which keeps the config's mode; a new config is created 0600.
+- **Round trip.** `--apply` then `--remove` restores the original byte for byte, unless it had no trailing newline.
+- **What it refuses**, changing nothing:
+  - a symlinked `config.toml`
+  - a broken marker pair
+  - a repo path that would need shell quoting
+  - hooks already defined in a form it can't extend: `hooks = {…}`, `hooks.X = …`, `[hooks.SessionStart]` as a plain table, or `SessionStart = …` under `[hooks]`
+- **Your own `[[hooks.<Event>]]` entries** are kept alongside ours.
+
+To do it by hand instead, add this to `~/.codex/config.toml`. If the file already has a `[hooks]` table or a `~/.codex/hooks.json`, merge it in by hand; Codex warns when one layer uses both.
 
 ```toml
 [[hooks.SessionStart]]
@@ -115,7 +134,8 @@ This is the same as `haunt-hook.sh`, with the helpers copied rather than importe
 ## Tests
 
 ```sh
-tests/run.sh
+tests/run.sh       # the hook
+tests/install.sh   # install.sh, against a temp HOME
 ```
 
 These are plain bash plus jq, `nc` and a perl listener on a temp socket. They cover every mapped event, the subagent and `notify` paths, the nonce, HAUNT gating, control and Cf stripping (including patch paths), the socket cap and truncation, a dead socket, the OSC body and its 250-byte cap across every event, the three fallback triggers, and an empty stdout on every path.
