@@ -1,0 +1,131 @@
+# haunt-codex
+
+Reports OpenAI Codex CLI sessions to the [haunt](../../haunt) terminal: running / needs you / done, plan progress, subagents, tool calls and approval prompts. It is the Codex twin of haunt's Claude Code hook (`haunt/hooks/scripts/haunt-hook.sh`). It speaks the same v1 event protocol, with `agent: "codex"`, over the same transport.
+
+## Requirements
+
+- Codex CLI with hooks: checked against 0.136.0. Hooks are on by default; `[features] hooks = false` turns them off.
+- `bash`, `jq` 1.6 or newer, and `nc` with `-U` (macOS ships one).
+
+## Install
+
+Add this to `~/.codex/config.toml`. If the file already has a `[hooks]` table or a `~/.codex/hooks.json`, merge it in by hand; Codex warns when one layer uses both.
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.SubagentStart]]
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.SubagentStop]]
+[[hooks.SubagentStop.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook"
+timeout = 5
+```
+
+Then start `codex` and run `/hooks`. Codex runs user hooks only after you have reviewed and trusted them there. The trust is tied to each hook's hash, so trust them again after you edit the snippet.
+
+The matchers are left out, so every hook matches every tool. The hooks stay synchronous (no `async = true`) because haunt needs them in order: `tool_start` before `permission_seen` before `tool_ran`.
+
+Newer Codex releases document an `Interrupt` event, which 0.136.0 does not have. Once yours has it, add the same block for `Interrupt`. The script maps it to `stop`.
+
+### Without hooks: `notify`
+
+On a Codex with no hooks, the legacy `notify` program still reports turn ends. Put this line at the very top of `config.toml`, before any `[table]`:
+
+```toml
+notify = ["/Users/lukaracki/code/haunt-plugins/haunt-codex/bin/haunt-codex-hook", "notify"]
+```
+
+That gives only `stop`, once per turn. Use the hooks or `notify`, not both: with both, every turn sends two `stop`s. That is harmless, but it is noise.
+
+## What it sends
+
+The script reads the hook JSON on stdin and dispatches on `hook_event_name`.
+
+| Codex | haunt event(s) | Notes |
+|---|---|---|
+| `SessionStart` | `session_start` | `model`, `source`, `plugin_version` |
+| `UserPromptSubmit` (main thread) | `prompt_submit` | `query` is the prompt. Dropped inside a subagent, because there the prompt is the parent's message to it. |
+| `PreToolUse` | `tool_start` | `tool_name`, `tool_use_id`, `tool_input` preview |
+| `PreToolUse` `spawn_agent` | + `subagent_spawn` | `agent_type` (default `default`, which matches `SubagentStart`). `description` is the `task_name`, else the first line of `message` (at most 80 characters). |
+| `PreToolUse` `request_user_input` | + `question_asked` | The core puts the row into needs you (status only). |
+| `PermissionRequest` | `permission_seen` | `tool_name`, `tool_input` (`command` / `file_path`). It has no `tool_use_id`; the core takes it from the matching `tool_start`. |
+| `PostToolUse` `update_plan` | `todos_written` | `tool_count` is the number of plan steps; `todos_done` is the number with status `completed` |
+| `PostToolUse` `apply_patch` | `file_edited` × each file (at most 20) | |
+| `PostToolUse` | `tool_done`, `tool_ran` | `tool_ran` drops `url` |
+| `PostToolUse` inside a subagent | + `subagent_tool` | |
+| `SubagentStart` / `SubagentStop` | `subagent_start` / `subagent_stop` | `agent_id` is the subagent's thread id |
+| `Stop`, `Interrupt` | `stop` | |
+| `notify` `agent-turn-complete` | `stop` | `session_id` is `thread-id` |
+| `PreCompact`, `PostCompact`, `SessionEnd` | nothing | |
+
+The `tool_input` preview is a subset of `command`, `url` and `file_path`, the same rule as the Claude hook. Codex reports every shell call (`shell`, `exec_command`) as `Bash` with a string `command`. `apply_patch` sends the whole patch as `command`. The script sends just the first file it touches, as `file_path`, made absolute against `cwd`. The approval preview then reads `apply_patch /w/src/a.rs`, never a wall of diff.
+
+## Transport and security
+
+This is the same as `haunt-hook.sh`, with the helpers copied rather than imported:
+
+- It does nothing unless `HAUNT=1`.
+- **Socket first.** If `HAUNT_SOCK` is a socket, `HAUNT_SURFACE_ID` is set and `nc` exists, it sends one JSON line per event to `nc -U -w 2`, carrying `surface_id` and `nonce`. If the send fails, the event is dropped. It is never downgraded to OSC.
+- **The nonce** comes from `$HAUNT_HOOK_NONCE`. jq reads it through `$ENV`, so it never appears on a command line. If it is unset, `nonce` is omitted.
+- **Sanitising.** Every string has C0/C1 controls, DEL and Unicode Cf (bidi overrides, zero-widths, BOM, soft hyphen, tags) removed before it is encoded.
+- **Size caps.** Socket lines are at most 60,000 bytes. Bulky fields are cut in a fixed order and marked `truncated: true`. If they are still too big, the line falls back to the id-only envelope. If even that is too big, the event is dropped. OSC bodies are at most 250 bytes.
+- **OSC 777 fallback** happens only when there is no socket. It sends the status-only body to `/dev/tty`, with no nonce, cwd, session id, prompt or command. **It never writes to stdout.** Codex adds plain hook stdout to the model's context on `SessionStart`, `UserPromptSubmit` and `SubagentStart`, so the Claude hook's `terminalSequence` trick would leak into the conversation. With no tty, the event is dropped.
+- It always exits 0 and prints nothing, so Codex never sees a decision from it.
+
+## Tests
+
+```sh
+tests/run.sh
+```
+
+These are plain bash plus jq, `nc` and a perl listener on a temp socket. They cover every mapped event, the subagent and `notify` paths, the nonce, HAUNT gating, control and Cf stripping (including patch paths), the socket cap and truncation, a dead socket, the OSC body and its 250-byte cap across every event, the three fallback triggers, and an empty stdout on every path.
+
+## Limits
+
+See `CORE-CHANGES.md` for what the core needs before Codex rows look right.
+
+- **Denied or failed calls send nothing.** Codex runs `PostToolUse` only for calls that succeeded, and has no failure hook. After you deny a prompt, the row stays in needs you until the next prompt or `Stop`, the same as a denial typed into Claude Code.
+- **A long-running `exec_command`** (one that returns a process id and keeps going) gets no `PostToolUse` until a later poll.
+- **Auto-review.** With approvals reviewed automatically, `PermissionRequest` still fires, so the row shows needs you until the call runs.
+- **No idle or notification hook**, and no session end on 0.136.0.
+- **Subagents** carry no tool count or duration from the parent, so the subrow counts the subagent's own tools.
