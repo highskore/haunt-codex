@@ -28,11 +28,12 @@ def sid: if $sock then env("HAUNT_SURFACE_ID") else null end;
 def base($e): {v:1, agent:"codex", event:$e, surface_id:sid, session_id, cwd, agent_id, agent_type, permission_mode, nonce:nonce};
 def ti: .tool_input | if type == "object" then . else {} end;
 def abs($p): if ($p | startswith("/")) or (.cwd | type) != "string" then $p else (.cwd | rtrimstr("/")) + "/" + $p end;
-# apply_patch sends the whole patch as `command`; haunt only needs the files it touches.
-def patch_paths: . as $r | [ti.command | strings | split("\n")[] | rtrimstr("\r") | capture("^\\*\\*\\* (?:Add|Update|Delete) File: (?<p>.+)$").p]
-  | unique | map(. as $p | $r | abs($p));
+# apply_patch sends the whole patch as `command`; haunt only needs the files it touches, in patch order.
+def patch_paths: . as $r | [ti.command | strings | split("\n")[] | rtrimstr("\r") | capture("^\\*\\*\\* (?:(?:Add|Update|Delete) File|Move to): (?<p>.+)$").p]
+  | map(. as $p | $r | abs($p)) | reduce .[] as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
+# Every path, one per line: a patch must never pass for a one-file edit, and the newline keeps haunt from answering it.
 def preview:
-  if .tool_name == "apply_patch" then {file_path:(patch_paths | first)} | with_entries(select(.value != null))
+  if .tool_name == "apply_patch" then patch_paths | if length == 0 then {} else {file_path:join("\n")} end
   else (.tool_input // {}) | if type == "object" then {command, url, file_path} | map_values(strings) | with_entries(select(.value != null)) else {} end
   end;
 def tool: {tool_name, tool_use_id, tool_input:preview};
@@ -62,7 +63,10 @@ def fit:
     end
   # An event whose ids alone overflow cannot be delivered intact, so it is dropped.
   | select(bytes <= $max);
-def finalize: with_entries(select(.value != null)) | walk(clean) | fit;
+# tool_input goes over the socket unmodified (JSON escapes keep it on one line), so the core can show a
+# hidden newline or bidi override instead of an approval preview that looks harmless.
+def finalize: with_entries(select(.value != null)) | .tool_input as $ti | del(.tool_input) | walk(clean)
+  | (if $ti == null then . else . + {tool_input:$ti} end) | fit;
 # OSC is status-only in the core, so it carries no nonce: just what moves status and progress, plus a cut title.
 def status:
   with_entries(select(.value != null)) | walk(clean)
@@ -123,8 +127,9 @@ bodies() {
         "$LIB ($EXPR) | if \$sock then finalize else status end" 2>/dev/null
 }
 
-# The socket is the authenticated path. If it is there, a failed send is dropped rather than downgraded to OSC.
-if [ -n "$SOCK" ] && [ -S "$SOCK" ] && [ -n "${HAUNT_SURFACE_ID:-}" ] && command -v nc > /dev/null; then
+# The socket is the authenticated path. If it is there, a failed send (no nc included) is dropped rather than downgraded to OSC.
+if [ -n "$SOCK" ] && [ -S "$SOCK" ] && [ -n "${HAUNT_SURFACE_ID:-}" ]; then
+    command -v nc > /dev/null || exit 0
     LINES=$(bodies "$SOCK_MAX" true) || exit 0
     [ -n "$LINES" ] && printf '%s\n' "$LINES" | nc -U -w 2 "$SOCK" > /dev/null 2>&1
     exit 0

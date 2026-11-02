@@ -117,16 +117,16 @@ The script reads the hook JSON on stdin and dispatches on `hook_event_name`.
 | `notify` `agent-turn-complete` | `stop` | `session_id` is `thread-id` |
 | `PreCompact`, `PostCompact`, `SessionEnd` | nothing | |
 
-The `tool_input` preview is a subset of `command`, `url` and `file_path`, the same rule as the Claude hook. Codex reports every shell call (`shell`, `exec_command`) as `Bash` with a string `command`. `apply_patch` sends the whole patch as `command`. The script sends just the first file it touches, as `file_path`, made absolute against `cwd`. The approval preview then reads `apply_patch /w/src/a.rs`, never a wall of diff.
+The `tool_input` preview is a subset of `command`, `url` and `file_path`, the same rule as the Claude hook. Codex reports every shell call (`shell`, `exec_command`) as `Bash` with a string `command`. `apply_patch` sends the whole patch as `command`. The script sends every file it touches (`Add`, `Update`, `Delete` and `Move to` targets, each once, in patch order), made absolute against `cwd` and joined by newlines, as `file_path`. The approval preview then reads `apply_patch /w/src/a.rs⏎/w/b.rs`, never a wall of diff, and never one file for a patch that writes several. haunt answers `apply_patch` only in the terminal.
 
 ## Transport and security
 
 This is the same as `haunt-hook.sh`, with the helpers copied rather than imported:
 
 - It does nothing unless `HAUNT=1`.
-- **Socket first.** If `HAUNT_SOCK` is a socket, `HAUNT_SURFACE_ID` is set and `nc` exists, it sends one JSON line per event to `nc -U -w 2`, carrying `surface_id` and `nonce`. If the send fails, the event is dropped. It is never downgraded to OSC.
+- **Socket first.** If `HAUNT_SOCK` is a socket and `HAUNT_SURFACE_ID` is set, it sends one JSON line per event to `nc -U -w 2`, carrying `surface_id` and `nonce`. If the send fails, or there is no `nc`, the event is dropped. It is never downgraded to OSC.
 - **The nonce** comes from `$HAUNT_HOOK_NONCE`. jq reads it through `$ENV`, so it never appears on a command line. If it is unset, `nonce` is omitted.
-- **Sanitising.** Every string has C0/C1 controls, DEL and Unicode Cf (bidi overrides, zero-widths, BOM, soft hyphen, tags) removed before it is encoded.
+- **Sanitising.** Every string but those in `tool_input` has C0/C1 controls, DEL and Unicode Cf (bidi overrides, zero-widths, BOM, soft hyphen, tags) removed before it is encoded. `tool_input` goes raw over the socket (JSON escapes keep it on one line), so haunt shows a hidden newline or bidi override in the approval preview and answers such a request only in the terminal.
 - **Size caps.** Socket lines are at most 60,000 bytes. Bulky fields are cut in a fixed order and marked `truncated: true`. If they are still too big, the line falls back to the id-only envelope. If even that is too big, the event is dropped. OSC bodies are at most 250 bytes.
 - **OSC 777 fallback** happens only when there is no socket. It sends the status-only body to `/dev/tty`, with no nonce, cwd, session id, prompt or command. **It never writes to stdout.** Codex adds plain hook stdout to the model's context on `SessionStart`, `UserPromptSubmit` and `SubagentStart`, so the Claude hook's `terminalSequence` trick would leak into the conversation. With no tty, the event is dropped.
 - It always exits 0 and prints nothing, so Codex never sees a decision from it.
@@ -138,7 +138,7 @@ tests/run.sh       # the hook
 tests/install.sh   # install.sh, against a temp HOME
 ```
 
-These are plain bash plus jq, `nc` and a perl listener on a temp socket. They cover every mapped event, the subagent and `notify` paths, the nonce, HAUNT gating, control and Cf stripping (including patch paths), the socket cap and truncation, a dead socket, the OSC body and its 250-byte cap across every event, the three fallback triggers, and an empty stdout on every path.
+These are plain bash plus jq, `nc` and a perl listener on a temp socket. They cover every mapped event, the subagent and `notify` paths, the nonce, HAUNT gating, control and Cf stripping, raw `tool_input` (including patch paths), every patch path, the socket cap and truncation, a dead socket, the OSC body and its 250-byte cap across every event, the three fallback triggers, no `nc`, and an empty stdout on every path.
 
 ## Limits
 

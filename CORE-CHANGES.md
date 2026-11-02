@@ -77,7 +77,7 @@ Shared payload fields:
 
 - `tool_name` (string): the agent's own tool name. Shell commands MUST be named `Bash`, because the core previews and allowlists only `Bash`. Both agents already do this.
 - `tool_use_id` (string): the agent's call id.
-- `tool_input` (object): only `command`, `url` and `file_path`, each a string. An adapter MUST NOT send other inputs (edit bodies, patches, prompts to subagents). For a file-editing tool, `file_path` is the absolute path of the first file it touches.
+- `tool_input` (object): only `command`, `url` and `file_path`, each a string. An adapter MUST NOT send other inputs (edit bodies, patches, prompts to subagents). For a file-editing tool, `file_path` is the absolute path of the file it touches; a call that may touch several (`apply_patch`) carries every path, newline-joined, so it is never answerable from haunt (see haunt `docs/agent-events.md`).
 
 ### Events
 
