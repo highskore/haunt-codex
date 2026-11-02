@@ -30,7 +30,7 @@ def ti: .tool_input | if type == "object" then . else {} end;
 def abs($p): if ($p | startswith("/")) or (.cwd | type) != "string" then $p else (.cwd | rtrimstr("/")) + "/" + $p end;
 # apply_patch sends the whole patch as `command`; haunt only needs the files it touches, in patch order.
 def patch_paths: . as $r | [ti.command | strings | split("\n")[] | rtrimstr("\r") | capture("^\\*\\*\\* (?:(?:Add|Update|Delete) File|Move to): (?<p>.+)$").p]
-  | map(. as $p | $r | abs($p)) | reduce .[] as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
+  | map(. as $p | $r | abs($p)) | reduce .[] as $p ({}; .[$p] //= true) | keys_unsorted;
 # Every path, one per line: a patch must never pass for a one-file edit, and the newline keeps haunt from answering it.
 def preview:
   if .tool_name == "apply_patch" then patch_paths | if length == 0 then {} else {file_path:join("\n")} end
