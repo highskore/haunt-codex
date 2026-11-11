@@ -62,7 +62,9 @@ inst --dry-run
 t "dry-run when installed reports no change" 'grep -q "already installed" "$TMP/out"'
 
 # README's snippet is exactly what install.sh writes.
-sed -n '/^```toml$/,/^```$/p' "$ROOT/README.md" | sed '1d;$d' | awk 'BEGIN{n=0} /^```/{exit} {print}' > "$TMP/readme"
+# The README shows a placeholder path, rewritten to this checkout before the diff.
+sed -n '/^```toml$/,/^```$/p' "$ROOT/README.md" | sed '1d;$d' | awk 'BEGIN{n=0} /^```/{exit} {print}' \
+    | sed "s|/absolute/path/to/haunt-codex|$ROOT|g" > "$TMP/readme"
 sed '1d;$d' "$CFG" > "$TMP/block"
 t "README snippet matches the installed block" 'diff -q "$TMP/readme" "$TMP/block" > /dev/null' "$(diff "$TMP/readme" "$TMP/block" | head -5)"
 
