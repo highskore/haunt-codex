@@ -29,8 +29,13 @@ def base($e): {v:1, agent:"codex", event:$e, surface_id:sid, session_id, cwd, ag
 def ti: .tool_input | if type == "object" then . else {} end;
 def abs($p): if ($p | startswith("/")) or (.cwd | type) != "string" then $p else (.cwd | rtrimstr("/")) + "/" + $p end;
 # apply_patch sends the whole patch as `command`; haunt only needs the files it touches, in patch order.
-def patch_paths: . as $r | [ti.command | strings | split("\n")[] | rtrimstr("\r") | capture("^\\*\\*\\* (?:(?:Add|Update|Delete) File|Move to): (?<p>.+)$").p]
-  | map(. as $p | $r | abs($p)) | reduce .[] as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
+# Codex trims patch lines, so this does too; an unreadable `***` line adds two markers, which keeps haunt from answering.
+def patch_paths: . as $r | [ti.command | strings | split("\n")[] | gsub("^\\s+|\\s+$"; "")] as $ls
+  | [$ls[] | capture("^\\*\\*\\*\\s*(?:(?:Add|Update|Delete) File|Move to):\\s*(?<p>.+)$").p]
+  | map(. as $p | $r | abs($p))
+  + (if any($ls[]; startswith("***") and (test("^\\*\\*\\*\\s*((Add|Update|Delete) File|Move to):|^\\*\\*\\*\\s*(Begin Patch|End Patch|End of File)$") | not))
+     then ["(a patch line haunt cannot read)", "(so this patch is shown, not answerable)"] else [] end)
+  | reduce .[] as $p ([]; if any(.[]; . == $p) then . else . + [$p] end);
 # Every path, one per line: a patch must never pass for a one-file edit, and the newline keeps haunt from answering it.
 def preview:
   if .tool_name == "apply_patch" then patch_paths | if length == 0 then {} else {file_path:join("\n")} end

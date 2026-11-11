@@ -121,6 +121,10 @@ check "PermissionRequest apply_patch shows a rename target, each path once" "{$T
     ".[0].tool_input == {file_path:\"/w/a.rs\n/etc/b.rs\"}"
 check "PermissionRequest apply_patch with one file sends just it" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: src/a.rs\n@@\n-x\n+y\n\"}}" \
     ".[0].tool_input == {file_path:\"/w/src/a.rs\"}"
+check "PermissionRequest apply_patch reads indented headers as Codex does" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: src/a.rs\n@@\n-x\n+y\n   *** Add File: /etc/evil\n+z\n\"}}" \
+    ".[0].tool_input == {file_path:\"/w/src/a.rs\n/etc/evil\"}"
+check "PermissionRequest apply_patch with an unreadable *** line is never a one-file edit" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"*** Update File: src/a.rs\n@@\n-x\n+y\n***Add  File:evil\n\"}}" \
+    ".[0].tool_input.file_path | contains(\"\n\")"
 check "PermissionRequest apply_patch naming no file sends no path" "{$T,\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"apply_patch\",\"tool_input\":{\"command\":\"garbage\"}}" \
     ".[0].tool_input == {}"
 check "SubagentStart -> subagent_start" "{$T,\"hook_event_name\":\"SubagentStart\",\"agent_id\":\"th2\",\"agent_type\":\"default\"}" \
