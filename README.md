@@ -1,6 +1,18 @@
+<div align="center">
+
+<img src="docs/icon.png" width="96" alt="">
+
 # haunt-codex
 
-Reports OpenAI Codex CLI sessions to the [haunt](../../haunt) terminal: running / needs you / done, plan progress, subagents, tool calls and approval prompts. It is the Codex twin of haunt's Claude Code hook (`haunt/hooks/scripts/haunt-hook.sh`). It speaks the same v1 event protocol, with `agent: "codex"`, over the same transport.
+**Reports Codex CLI sessions to Haunt from its own hooks.**
+
+[![Haunt](https://img.shields.io/badge/Haunt-Codex%20adapter-D97757)](https://github.com/highskore/haunt-hackathon)
+![bash + jq](https://img.shields.io/badge/hooks-bash%20%2B%20jq-111)
+[![License](https://img.shields.io/badge/license-see%20LICENSE-blue)](LICENSE)
+
+</div>
+
+Reports OpenAI Codex CLI sessions to the [haunt](https://github.com/highskore/haunt) terminal: running / needs you / done, plan progress, subagents, tool calls and approval prompts. It is the Codex twin of haunt's Claude Code hook (`haunt/hooks/scripts/haunt-hook.sh`). It speaks the same v1 event protocol, with `agent: "codex"`, over the same transport.
 
 ## Requirements
 
